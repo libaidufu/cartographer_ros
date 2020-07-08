@@ -175,9 +175,10 @@ void Node::AddSensorSamplers(const int trajectory_id,
           options.fixed_frame_pose_sampling_ratio, options.imu_sampling_ratio,
           options.landmarks_sampling_ratio));
 }
-
 void Node::PublishTrajectoryStates(const ::ros::WallTimerEvent& timer_event) {
-  carto::common::MutexLocker lock(&mutex_);
+    map_robot_odom_high_rate_publisher_ = node_handle_.advertise<nav_msgs::Odometry>("localization/ackermanekf",10);
+    map_robot_odom_low_rate_publisher_ = node_handle_.advertise<nav_msgs::Odometry>("localization/odom",10);
+    carto::common::MutexLocker lock(&mutex_);
   for (const auto& entry : map_builder_bridge_.GetTrajectoryStates()) {
     const auto& trajectory_state = entry.second;
 
@@ -229,7 +230,8 @@ void Node::PublishTrajectoryStates(const ::ros::WallTimerEvent& timer_event) {
         trajectory_state.local_to_map * tracking_to_local;
 
     if (trajectory_state.published_to_tracking != nullptr) {
-      if (trajectory_state.trajectory_options.provide_odom_frame) {
+        nav_msgs::Odometry laser_odom_;
+        if (trajectory_state.trajectory_options.provide_odom_frame) {
         std::vector<geometry_msgs::TransformStamped> stamped_transforms;
 
         stamped_transform.header.frame_id = node_options_.map_frame;
@@ -255,7 +257,20 @@ void Node::PublishTrajectoryStates(const ::ros::WallTimerEvent& timer_event) {
         stamped_transform.transform = ToGeometryMsgTransform(
             tracking_to_map * (*trajectory_state.published_to_tracking));
         tf_broadcaster_.sendTransform(stamped_transform);
-      }
+
+        laser_odom_.header.stamp = stamped_transform.header.stamp;
+        laser_odom_.header.frame_id = "map";
+        laser_odom_.child_frame_id = "base_link";
+        laser_odom_.pose.pose.position.x = stamped_transform.transform.translation.x;
+        laser_odom_.pose.pose.position.y = stamped_transform.transform.translation.y;
+        laser_odom_.pose.pose.position.z = stamped_transform.transform.translation.z;
+        laser_odom_.pose.pose.orientation = stamped_transform.transform.rotation;
+        map_robot_odom_high_rate_publisher_.publish(laser_odom_);
+        ++count;
+        if (count % 10 == 0) {
+            map_robot_odom_low_rate_publisher_.publish(laser_odom_);
+        }
+        }
     }
   }
 }

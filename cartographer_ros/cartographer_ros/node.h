@@ -178,8 +178,10 @@ class Node {
   // These ros::ServiceServers need to live for the lifetime of the node.
   std::vector<::ros::ServiceServer> service_servers_;
   ::ros::Publisher scan_matched_point_cloud_publisher_;
+  ::ros::Publisher map_robot_odom_high_rate_publisher_;
+  ::ros::Publisher map_robot_odom_low_rate_publisher_;
 
-  struct TrajectorySensorSamplers {
+    struct TrajectorySensorSamplers {
     TrajectorySensorSamplers(const double rangefinder_sampling_ratio,
                              const double odometry_sampling_ratio,
                              const double fixed_frame_pose_sampling_ratio,
@@ -208,6 +210,7 @@ class Node {
   // We have to keep the timer handles of ::ros::WallTimers around, otherwise
   // they do not fire.
   std::vector<::ros::WallTimer> wall_timers_;
+  int count = 0;
 };
 
 }  // namespace cartographer_ros
