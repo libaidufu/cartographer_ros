@@ -180,7 +180,7 @@ class Node {
   ::ros::Publisher scan_matched_point_cloud_publisher_;
   ::ros::Publisher map_robot_odom_high_rate_publisher_;
   ::ros::Publisher map_robot_odom_low_rate_publisher_;
-
+  ::ros::Publisher map_robot_odom_pure_lidar_publisher_;
     struct TrajectorySensorSamplers {
     TrajectorySensorSamplers(const double rangefinder_sampling_ratio,
                              const double odometry_sampling_ratio,

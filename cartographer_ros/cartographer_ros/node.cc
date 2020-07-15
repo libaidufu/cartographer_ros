@@ -178,6 +178,7 @@ void Node::AddSensorSamplers(const int trajectory_id,
 void Node::PublishTrajectoryStates(const ::ros::WallTimerEvent& timer_event) {
     map_robot_odom_high_rate_publisher_ = node_handle_.advertise<nav_msgs::Odometry>("localization/ackermanekf",10);
     map_robot_odom_low_rate_publisher_ = node_handle_.advertise<nav_msgs::Odometry>("localization/odom",10);
+    map_robot_odom_pure_lidar_publisher_ = node_handle_.advertise<nav_msgs::Odometry>("localization_pure_lidar",10);
     carto::common::MutexLocker lock(&mutex_);
   for (const auto& entry : map_builder_bridge_.GetTrajectoryStates()) {
     const auto& trajectory_state = entry.second;
@@ -228,9 +229,23 @@ void Node::PublishTrajectoryStates(const ::ros::WallTimerEvent& timer_event) {
 
     const Rigid3d tracking_to_map =
         trajectory_state.local_to_map * tracking_to_local;
-
+    if (trajectory_state.local_slam_data != nullptr){
+        geometry_msgs::TransformStamped temp_transform;
+        temp_transform.transform = ToGeometryMsgTransform(
+            tracking_to_map * (trajectory_state.local_slam_data->local_pose));
+        nav_msgs::Odometry odom_pure_localition;
+        // Don't publish odom frame
+        odom_pure_localition.header.stamp = ToRos(trajectory_state.local_slam_data->time);
+        odom_pure_localition.header.frame_id = "map";
+        odom_pure_localition.child_frame_id = "base_link";
+        odom_pure_localition.pose.pose.position.x = temp_transform.transform.translation.x;
+        odom_pure_localition.pose.pose.position.y = temp_transform.transform.translation.y;
+        odom_pure_localition.pose.pose.position.z = temp_transform.transform.translation.z;
+        odom_pure_localition.pose.pose.orientation = temp_transform.transform.rotation;
+        map_robot_odom_pure_lidar_publisher_.publish(odom_pure_localition);
+    }
     if (trajectory_state.published_to_tracking != nullptr) {
-        nav_msgs::Odometry laser_odom_;
+        nav_msgs::Odometry laser_odom;
         if (trajectory_state.trajectory_options.provide_odom_frame) {
         std::vector<geometry_msgs::TransformStamped> stamped_transforms;
 
@@ -258,17 +273,17 @@ void Node::PublishTrajectoryStates(const ::ros::WallTimerEvent& timer_event) {
             tracking_to_map * (*trajectory_state.published_to_tracking));
         tf_broadcaster_.sendTransform(stamped_transform);
 
-        laser_odom_.header.stamp = stamped_transform.header.stamp;
-        laser_odom_.header.frame_id = "map";
-        laser_odom_.child_frame_id = "base_link";
-        laser_odom_.pose.pose.position.x = stamped_transform.transform.translation.x;
-        laser_odom_.pose.pose.position.y = stamped_transform.transform.translation.y;
-        laser_odom_.pose.pose.position.z = stamped_transform.transform.translation.z;
-        laser_odom_.pose.pose.orientation = stamped_transform.transform.rotation;
-        map_robot_odom_high_rate_publisher_.publish(laser_odom_);
+        laser_odom.header.stamp = stamped_transform.header.stamp;
+        laser_odom.header.frame_id = "map";
+        laser_odom.child_frame_id = "base_link";
+        laser_odom.pose.pose.position.x = stamped_transform.transform.translation.x;
+        laser_odom.pose.pose.position.y = stamped_transform.transform.translation.y;
+        laser_odom.pose.pose.position.z = stamped_transform.transform.translation.z;
+        laser_odom.pose.pose.orientation = stamped_transform.transform.rotation;
+        map_robot_odom_high_rate_publisher_.publish(laser_odom);
         ++count;
         if (count % 10 == 0) {
-            map_robot_odom_low_rate_publisher_.publish(laser_odom_);
+            map_robot_odom_low_rate_publisher_.publish(laser_odom);
         }
         }
     }
