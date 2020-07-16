@@ -121,6 +121,9 @@ Node::Node(
       ::ros::WallDuration(node_options_.pose_publish_period_sec),
       &Node::PublishTrajectoryStates, this));
   wall_timers_.push_back(node_handle_.createWallTimer(
+      ::ros::WallDuration(robot_pose_publish_period_sec_),
+      &Node::PublishTrajectoryStatesMyRobot, this));
+  wall_timers_.push_back(node_handle_.createWallTimer(
       ::ros::WallDuration(node_options_.trajectory_publish_period_sec),
       &Node::PublishTrajectoryNodeList, this));
   wall_timers_.push_back(node_handle_.createWallTimer(
@@ -178,7 +181,6 @@ void Node::AddSensorSamplers(const int trajectory_id,
 void Node::PublishTrajectoryStates(const ::ros::WallTimerEvent& timer_event) {
     map_robot_odom_high_rate_publisher_ = node_handle_.advertise<nav_msgs::Odometry>("localization/ackermanekf",10);
     map_robot_odom_low_rate_publisher_ = node_handle_.advertise<nav_msgs::Odometry>("localization/odom",10);
-    map_robot_odom_pure_lidar_publisher_ = node_handle_.advertise<nav_msgs::Odometry>("localization_pure_lidar",10);
     carto::common::MutexLocker lock(&mutex_);
   for (const auto& entry : map_builder_bridge_.GetTrajectoryStates()) {
     const auto& trajectory_state = entry.second;
@@ -229,21 +231,6 @@ void Node::PublishTrajectoryStates(const ::ros::WallTimerEvent& timer_event) {
 
     const Rigid3d tracking_to_map =
         trajectory_state.local_to_map * tracking_to_local;
-    if (trajectory_state.local_slam_data != nullptr){
-        geometry_msgs::TransformStamped temp_transform;
-        temp_transform.transform = ToGeometryMsgTransform(
-            tracking_to_map * (trajectory_state.local_slam_data->local_pose));
-        nav_msgs::Odometry odom_pure_localition;
-        // Don't publish odom frame
-        odom_pure_localition.header.stamp = ToRos(trajectory_state.local_slam_data->time);
-        odom_pure_localition.header.frame_id = "map";
-        odom_pure_localition.child_frame_id = "base_link";
-        odom_pure_localition.pose.pose.position.x = temp_transform.transform.translation.x;
-        odom_pure_localition.pose.pose.position.y = temp_transform.transform.translation.y;
-        odom_pure_localition.pose.pose.position.z = temp_transform.transform.translation.z;
-        odom_pure_localition.pose.pose.orientation = temp_transform.transform.rotation;
-        map_robot_odom_pure_lidar_publisher_.publish(odom_pure_localition);
-    }
     if (trajectory_state.published_to_tracking != nullptr) {
         nav_msgs::Odometry laser_odom;
         if (trajectory_state.trajectory_options.provide_odom_frame) {
@@ -732,4 +719,96 @@ void Node::LoadState(const std::string& state_filename,
   map_builder_bridge_.LoadState(state_filename, load_frozen_state);
 }
 
+void Node::PublishTrajectoryStatesMyRobot(const ::ros::WallTimerEvent& timer_event) {
+    map_robot_odom_pure_lidar_publisher_ = node_handle_.advertise<nav_msgs::Odometry>("robot_loc",10);
+    carto::common::MutexLocker lock(&mutex_);
+  for (const auto& entry : map_builder_bridge_.GetTrajectoryStates()) {
+    const auto& trajectory_state = entry.second;
+
+    auto& extrapolator = extrapolators_.at(entry.first);
+    // We only publish a point cloud if it has changed. It is not needed at high
+    // frequency, and republishing it would be computationally wasteful.
+    if (trajectory_state.local_slam_data->time !=
+        extrapolator.GetLastPoseTime()) {
+      if (scan_matched_point_cloud_publisher_.getNumSubscribers() > 0) {
+        // TODO(gaschler): Consider using other message without time
+        // information.
+        carto::sensor::TimedPointCloud point_cloud;
+        point_cloud.reserve(trajectory_state.local_slam_data
+                                ->range_data_in_local.returns.size());
+        for (const Eigen::Vector3f point :
+             trajectory_state.local_slam_data->range_data_in_local.returns) {
+          Eigen::Vector4f point_time;
+          point_time << point, 0.f;
+          point_cloud.push_back(point_time);
+        }
+        scan_matched_point_cloud_publisher_.publish(ToPointCloud2Message(
+            carto::common::ToUniversal(trajectory_state.local_slam_data->time),
+            node_options_.map_frame,
+            carto::sensor::TransformTimedPointCloud(
+                point_cloud, trajectory_state.local_to_map.cast<float>())));
+      }
+      extrapolator.AddPose(trajectory_state.local_slam_data->time,
+                           trajectory_state.local_slam_data->local_pose);
+    }
+
+    geometry_msgs::TransformStamped stamped_transform;
+    // If we do not publish a new point cloud, we still allow time of the
+    // published poses to advance. If we already know a newer pose, we use its
+    // time instead. Since tf knows how to interpolate, providing newer
+    // information is better.
+    const ::cartographer::common::Time now = std::max(
+        FromRos(ros::Time::now()), extrapolator.GetLastExtrapolatedTime());
+    stamped_transform.header.stamp = ToRos(now);
+
+    const Rigid3d tracking_to_local = [&] {
+      if (trajectory_state.trajectory_options.publish_frame_projected_to_2d) {
+        return carto::transform::Embed3D(
+            carto::transform::Project2D(extrapolator.ExtrapolatePose(now)));
+      }
+      return extrapolator.ExtrapolatePose(now);
+    }();
+
+    const Rigid3d tracking_to_map =
+        trajectory_state.local_to_map * tracking_to_local;
+    if (trajectory_state.published_to_tracking != nullptr) {
+        nav_msgs::Odometry laser_odom;
+        if (trajectory_state.trajectory_options.provide_odom_frame) {
+        std::vector<geometry_msgs::TransformStamped> stamped_transforms;
+
+        stamped_transform.header.frame_id = node_options_.map_frame;
+        stamped_transform.child_frame_id =
+            trajectory_state.trajectory_options.odom_frame;
+        stamped_transform.transform =
+            ToGeometryMsgTransform(trajectory_state.local_to_map);
+        stamped_transforms.push_back(stamped_transform);
+
+        stamped_transform.header.frame_id =
+            trajectory_state.trajectory_options.odom_frame;
+        stamped_transform.child_frame_id =
+            trajectory_state.trajectory_options.published_frame;
+        stamped_transform.transform = ToGeometryMsgTransform(
+            tracking_to_local * (*trajectory_state.published_to_tracking));
+        stamped_transforms.push_back(stamped_transform);
+
+      } else {
+        stamped_transform.header.frame_id = node_options_.map_frame;
+        stamped_transform.child_frame_id =
+            trajectory_state.trajectory_options.published_frame;
+        stamped_transform.transform = ToGeometryMsgTransform(
+            tracking_to_map * (*trajectory_state.published_to_tracking));
+
+        laser_odom.header.stamp = stamped_transform.header.stamp;
+        laser_odom.header.frame_id = "map";
+        laser_odom.child_frame_id = "base_link";
+        laser_odom.pose.pose.position.x = stamped_transform.transform.translation.x;
+        laser_odom.pose.pose.position.y = stamped_transform.transform.translation.y;
+        laser_odom.pose.pose.position.z = stamped_transform.transform.translation.z;
+        laser_odom.pose.pose.orientation = stamped_transform.transform.rotation;
+        map_robot_odom_pure_lidar_publisher_.publish(laser_odom);
+       
+        }
+        }
+    }
+  }
 }  // namespace cartographer_ros

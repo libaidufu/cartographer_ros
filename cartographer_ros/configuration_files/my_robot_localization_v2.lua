@@ -75,6 +75,7 @@ POSE_GRAPH.constraint_builder.min_score = 0.7
 -- POSE_GRAPH.optimization_problem.*_weight
 -- POSE_GRAPH.optimization_problem.ceres_solver_options
 POSE_GRAPH.global_sampling_ratio = 0.001
+POSE_GRAPH.global_constraint_search_after_n_seconds = 3000.
 
 
 
