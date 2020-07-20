@@ -154,6 +154,7 @@ class Node {
   void AddSensorSamplers(int trajectory_id, const TrajectoryOptions& options);
   void PublishTrajectoryStates(const ::ros::WallTimerEvent& timer_event);
   void PublishTrajectoryStatesMyRobot(const ::ros::WallTimerEvent& timer_event);
+  void PublishTrajectoryStatesToCloud(const ::ros::WallTimerEvent& timer_event);
   void PublishTrajectoryNodeList(const ::ros::WallTimerEvent& timer_event);
   void PublishLandmarkPosesList(const ::ros::WallTimerEvent& timer_event);
   void PublishConstraintList(const ::ros::WallTimerEvent& timer_event);
@@ -213,6 +214,7 @@ class Node {
   std::vector<::ros::WallTimer> wall_timers_;
   int count = 0;
   double robot_pose_publish_period_sec_ = 0.03;
+  double robot_pose_to_cloud_publish_period_sec_ = 0.125;
 };
 
 }  // namespace cartographer_ros
