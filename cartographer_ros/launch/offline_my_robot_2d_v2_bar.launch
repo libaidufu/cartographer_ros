@@ -16,7 +16,7 @@
       type="cartographer_offline_node" args="
           -configuration_directory $(find cartographer_ros)/configuration_files
           -configuration_basenames my_robot_v2.lua
-          -urdf_filenames $(find cartographer_ros)/urdf/my_robot_2d.urdf
+          -urdf_filenames $(find cartographer_ros)/urdf/my_robot_2d_bar.urdf
           -bag_filenames $(arg bag_filenames)"
       output="screen">
 
